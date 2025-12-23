@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { LabJob, Dentist, Expense } from '../types';
+import { database } from '../services/db';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -16,8 +17,8 @@ import {
   Loader2,
   Printer,
   ChevronLeft,
-  // Fix: Added missing Award import from lucide-react
-  Award
+  Award,
+  Download
 } from 'lucide-react';
 
 interface FinancialManagerProps {
@@ -30,9 +31,8 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
   const [view, setView] = useState<'overview' | 'individual'>('overview');
   const [selectedDentist, setSelectedDentist] = useState<string>('');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
-  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  // Cálculos de Devedores (Dentistas com pagamentos pendentes)
   const debtors = useMemo(() => {
     const list: Record<string, { dentist: Dentist, total: number, jobCount: number }> = {};
     jobs.filter(j => j.paymentStatus === 'PENDENTE' && j.status !== 'CANCELADO').forEach(job => {
@@ -50,7 +50,6 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
     return Object.values(list).sort((a, b) => b.total - a.total);
   }, [jobs, dentists]);
 
-  // Cálculos de Credores (Despesas pendentes)
   const creditors = useMemo(() => {
     return expenses.filter(e => !e.isPaid).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
   }, [expenses]);
@@ -62,7 +61,6 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
     return { toReceive, toPay, totalPaid, balance: toReceive - toPay };
   }, [debtors, creditors, jobs]);
 
-  // Relatório Individual
   const individualReport = useMemo(() => {
     if (!selectedDentist) return [];
     return jobs.filter(j => {
@@ -76,13 +74,35 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
 
   const individualTotal = individualReport.reduce((acc, j) => acc + j.value, 0);
 
-  const handlePrint = (type: 'overview' | 'individual') => {
-    setIsGeneratingPDF(true);
-    // Simula preparação do documento
+  const handleExportCSV = () => {
+    setIsGenerating(true);
     setTimeout(() => {
-      window.print();
-      setIsGeneratingPDF(false);
-    }, 800);
+      if (view === 'overview') {
+        const dataToExport = debtors.map(d => ({
+          Dentista: d.dentist.name,
+          Clinica: d.dentist.clinic,
+          CRO: d.dentist.cro,
+          Total_Pendente: d.total,
+          Pedidos: d.jobCount
+        }));
+        database.exportToCSV(dataToExport, 'relatorio_financeiro_geral');
+      } else {
+        const dataToExport = individualReport.map(j => ({
+          Data: j.entryDate,
+          Paciente: j.patientName,
+          Servico: j.type,
+          Valor: j.value,
+          Status_Pagamento: j.paymentStatus
+        }));
+        const name = dentists.find(d => d.id === selectedDentist)?.name || 'cliente';
+        database.exportToCSV(dataToExport, `extrato_${name.toLowerCase().replace(/\s+/g, '_')}`);
+      }
+      setIsGenerating(false);
+    }, 1000);
+  };
+
+  const handlePrint = () => {
+    window.print();
   };
 
   return (
@@ -95,7 +115,7 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
             </div>
             Gestão Financeira
           </h2>
-          <p className="text-slate-500 font-medium text-sm">Controle de caixa, extratos e relatórios em PDF.</p>
+          <p className="text-slate-500 font-medium text-sm">Controle de caixa, extratos e relatórios CSV.</p>
         </div>
         
         <div className="flex flex-wrap gap-3">
@@ -115,17 +135,16 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
           </div>
           
           <button 
-            onClick={() => handlePrint(view)}
-            disabled={isGeneratingPDF || (view === 'individual' && !selectedDentist)}
+            onClick={handleExportCSV}
+            disabled={isGenerating || (view === 'individual' && !selectedDentist)}
             className="flex items-center gap-2 bg-white border-2 border-[#0a3d62] text-[#0a3d62] hover:bg-slate-50 px-6 py-3 rounded-2xl font-black transition-all active:scale-95 uppercase tracking-widest text-[10px] disabled:opacity-50"
           >
-            {isGeneratingPDF ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-            {isGeneratingPDF ? 'Gerando...' : 'Imprimir / PDF'}
+            {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            {isGenerating ? 'Exportando...' : 'Exportar CSV'}
           </button>
         </div>
       </header>
 
-      {/* Cabeçalho de Impressão (Apenas visível no PDF) */}
       <div className="hidden print:block mb-10 border-b-4 border-[#0a3d62] pb-6">
         <div className="flex justify-between items-center">
           <div>
@@ -141,7 +160,6 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
 
       {view === 'overview' ? (
         <div className="space-y-8">
-          {/* Dashboard Financeiro */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="bg-white p-7 rounded-[32px] shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-xl transition-all">
               <div className="flex items-center justify-between mb-4">
@@ -195,7 +213,6 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Tabela de Devedores */}
             <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden print:border-none">
               <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-3">
@@ -233,7 +250,6 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
               </div>
             </div>
 
-            {/* Tabela de Credores */}
             <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden print:border-none">
               <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-3">
@@ -264,7 +280,6 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
         </div>
       ) : (
         <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden print:border-none">
-          {/* Filtros do Relatório Individual */}
           <div className="p-10 bg-slate-50/50 border-b border-slate-100 print:hidden">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div>
@@ -299,7 +314,6 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
             </div>
           </div>
 
-          {/* Conteúdo do Relatório / Extrato */}
           <div className="p-12">
             {!selectedDentist ? (
               <div className="flex flex-col items-center justify-center py-24 text-slate-400">
@@ -374,34 +388,14 @@ const FinancialManager: React.FC<FinancialManagerProps> = ({ jobs, dentists, exp
                   )}
                 </div>
 
-                {/* Rodapé do Extrato para Impressão */}
-                <div className="hidden print:block mt-12 pt-8 border-t border-slate-200">
-                  <div className="grid grid-cols-2 gap-10">
-                    <div className="text-slate-400 text-[10px] font-medium leading-relaxed">
-                      <p className="font-black uppercase tracking-widest mb-2 text-slate-600">Observações Importantes:</p>
-                      <p>1. Este documento é um extrato de conferência para fins de conciliação laboratorial.</p>
-                      <p>2. Os valores aqui expressos referem-se aos serviços técnicos já executados ou em trânsito.</p>
-                      <p>3. Dúvidas sobre o fechamento devem ser reportadas em até 48h após o recebimento.</p>
-                    </div>
-                    <div className="flex flex-col items-center justify-end">
-                      <div className="w-64 h-[1px] bg-slate-300 mb-2"></div>
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Assinatura / Responsável</p>
-                    </div>
-                  </div>
-                </div>
-
                 <div className="mt-16 flex justify-end gap-4 print:hidden">
                   <button 
-                    onClick={() => handlePrint('individual')}
-                    disabled={isGeneratingPDF}
+                    onClick={handleExportCSV}
+                    disabled={isGenerating}
                     className="flex items-center gap-3 px-10 py-5 bg-[#0a3d62] text-white rounded-2xl font-black hover:bg-[#083352] transition-all shadow-xl shadow-blue-900/20 uppercase tracking-widest text-[11px] active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
                   >
-                    {isGeneratingPDF ? (
-                      <Loader2 size={18} className="animate-spin" />
-                    ) : (
-                      <FileText size={18} />
-                    )}
-                    {isGeneratingPDF ? 'Preparando Extrato...' : 'Exportar Fatura PDF'}
+                    {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                    {isGenerating ? 'Exportando CSV...' : 'Exportar Fatura CSV'}
                   </button>
                 </div>
               </div>
